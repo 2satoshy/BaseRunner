@@ -12,5 +12,8 @@
     "api/**/*.ts": {
       "runtime": "@vercel/node@3.0.0"
     }
+  },
+  "env": {
+    "NODE_VERSION": "20"
   }
 }
