@@ -1,25 +1,48 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import mongoose from 'mongoose';
 
-// MongoDB connection
-let isConnected = false;
+// MongoDB connection - optimized for serverless
+let cached = (global as any).mongoose;
+
+if (!cached) {
+  cached = (global as any).mongoose = { conn: null, promise: null };
+}
 
 const connectDB = async () => {
-  if (isConnected) return;
-  
+  if (cached.conn) {
+    console.log('Using cached MongoDB connection');
+    return cached.conn;
+  }
+
   const uri = process.env.MONGODB_URI;
   if (!uri) {
+    console.error('MONGODB_URI is not defined in environment');
     throw new Error('MONGODB_URI is not defined');
   }
   
-  try {
-    await mongoose.connect(uri);
-    isConnected = true;
-    console.log('MongoDB Connected');
-  } catch (error) {
-    console.error('MongoDB connection error:', error);
-    throw error;
+  console.log('Connecting to MongoDB...');
+  console.log('URI prefix:', uri.substring(0, 30) + '...');
+
+  if (!cached.promise) {
+    const opts = {
+      bufferCommands: false,
+    };
+
+    cached.promise = mongoose.connect(uri, opts).then((mongoose) => {
+      console.log('MongoDB connected successfully');
+      return mongoose;
+    });
   }
+
+  try {
+    cached.conn = await cached.promise;
+  } catch (e) {
+    cached.promise = null;
+    console.error('MongoDB connection error:', e);
+    throw e;
+  }
+
+  return cached.conn;
 };
 
 // User Schema
@@ -90,8 +113,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       status: 'ok',
       timestamp: new Date().toISOString(),
       message: 'BaseRunner API is running',
+      mongoConnected: mongoose.connection.readyState === 1,
     });
-  } catch (error) {
-    return res.status(500).json({ error: 'Database connection failed' });
+  } catch (error: any) {
+    console.error('Handler error:', error);
+    return res.status(500).json({ 
+      error: 'Database connection failed',
+      details: error.message || 'Unknown error',
+      hasUri: !!process.env.MONGODB_URI,
+    });
   }
 }

@@ -47,6 +47,16 @@ const SHADOW_ALIEN_GEO = new THREE.CircleGeometry(0.8, 32);
 const SHADOW_MISSILE_GEO = new THREE.PlaneGeometry(0.15, 3);
 const SHADOW_DEFAULT_GEO = new THREE.CircleGeometry(0.8, 6);
 
+// New Obstacle Geometries
+const LASER_POST_GEO = new THREE.CylinderGeometry(0.15, 0.15, 3, 8);
+const LASER_BEAM_GEO = new THREE.BoxGeometry(1, 0.3, 0.1); // Will be scaled
+const BARRIER_GEO = new THREE.BoxGeometry(0.5, 2.5, 0.5);
+const SPIKE_GEO = new THREE.ConeGeometry(0.3, 0.8, 4);
+const TURRET_BASE_GEO = new THREE.CylinderGeometry(0.5, 0.6, 0.4, 8);
+const TURRET_BARREL_GEO = new THREE.CylinderGeometry(0.1, 0.1, 0.8, 8);
+const JUMP_PAD_GEO = new THREE.CylinderGeometry(0.8, 0.8, 0.15, 16);
+const SPEED_BOOST_GEO = new THREE.ConeGeometry(0.4, 0.8, 6);
+
 // Shop Geometries
 const SHOP_FRAME_GEO = new THREE.BoxGeometry(1, 7, 1); // Will be scaled
 const SHOP_BACK_GEO = new THREE.BoxGeometry(1, 5, 1.2); // Will be scaled
@@ -54,14 +64,34 @@ const SHOP_OUTLINE_GEO = new THREE.BoxGeometry(1, 7.2, 0.8); // Will be scaled
 const SHOP_FLOOR_GEO = new THREE.PlaneGeometry(1, 4); // Will be scaled
 
 const PARTICLE_COUNT = 600;
-const BASE_LETTER_INTERVAL = 150; 
+const BASE_LETTER_INTERVAL = 200; // Increased slightly for longer levels
 
 const getLetterInterval = (level: number) => {
-    // Level 1: 150
-    // Level 2: 225 (150 * 1.5)
-    // Level 3: 337.5 (225 * 1.5)
-    return BASE_LETTER_INTERVAL * Math.pow(1.5, Math.max(0, level - 1));
+    // Level 1: 200, Level 2: 280, Level 3: 360...
+    // Slower increase for longer gameplay
+    return BASE_LETTER_INTERVAL * (1 + (level - 1) * 0.4);
 };
+
+// Difficulty scaling per level
+const getDifficultyConfig = (level: number) => ({
+    // Obstacle spawn chance increases per level
+    obstacleChance: Math.min(0.20 + (level * 0.05), 0.50), // 20% to 50%
+    // Multi-obstacle chance
+    multiObstacleChance: Math.min(0.50 + (level * 0.05), 0.85),
+    tripleObstacleChance: Math.min(0.80 + (level * 0.02), 0.95),
+    // Enemy spawn chances
+    droneChance: level >= 2 ? Math.min(0.10 + (level - 2) * 0.03, 0.25) : 0,
+    alienChance: level >= 2 ? Math.min(0.15 + (level - 2) * 0.04, 0.35) : 0,
+    // Gap/platform mechanics (level 4+)
+    gapChance: level >= 4 ? Math.min(0.05 + (level - 4) * 0.02, 0.15) : 0,
+    // Gem values increase per level
+    gemBaseValue: 50 + (level - 1) * 10,
+    gemBonusValue: 100 + (level - 1) * 25,
+    // Minimum gap between spawns (decreases with level for more density)
+    minGap: Math.max(10, 14 - level * 0.5),
+    // Powerup frequency (slightly more at higher levels to help)
+    powerupChance: Math.min(0.05 + (level * 0.01), 0.12),
+});
 
 const MISSILE_SPEED = 30; // Extra speed added to world speed
 
@@ -301,6 +331,42 @@ export const LevelManager: React.FC = () => {
                 obj.position[0] = THREE.MathUtils.lerp(obj.position[0], targetX, lerpSpeed);
             }
         }
+
+        // BARRIER MOVEMENT LOGIC (side-to-side)
+        if (obj.type === ObjectType.BARRIER && obj.active) {
+            const maxX = Math.floor(laneCount / 2) * LANE_WIDTH;
+            obj.position[0] += (obj.moveDirection || 1) * (obj.moveSpeed || 3) * safeDelta;
+            
+            // Bounce off lane boundaries
+            if (obj.position[0] > maxX) {
+                obj.position[0] = maxX;
+                obj.moveDirection = -1;
+            } else if (obj.position[0] < -maxX) {
+                obj.position[0] = -maxX;
+                obj.moveDirection = 1;
+            }
+        }
+
+        // TURRET FIRING LOGIC
+        if (obj.type === ObjectType.TURRET && obj.active && !obj.hasFired) {
+            if (obj.position[2] > -80) {
+                obj.hasFired = true;
+                
+                // Fire at player's current lane
+                newSpawns.push({
+                    id: uuidv4(),
+                    type: ObjectType.MISSILE,
+                    position: [obj.position[0], 0.8, obj.position[2] + 2],
+                    active: true,
+                    color: '#ffaa00'
+                });
+                hasChanges = true;
+                
+                window.dispatchEvent(new CustomEvent('particle-burst', {
+                    detail: { position: obj.position, color: '#ffaa00' }
+                }));
+            }
+        }
         
         // ALIEN AI LOGIC
         if (obj.type === ObjectType.ALIEN && obj.active && !obj.hasFired) {
@@ -348,7 +414,11 @@ export const LevelManager: React.FC = () => {
                      const isDamageSource = obj.type === ObjectType.OBSTACLE 
                         || obj.type === ObjectType.ALIEN 
                         || obj.type === ObjectType.MISSILE
-                        || obj.type === ObjectType.DRONE;
+                        || obj.type === ObjectType.DRONE
+                        || obj.type === ObjectType.LASER_GATE
+                        || obj.type === ObjectType.BARRIER
+                        || obj.type === ObjectType.SPIKE_FLOOR
+                        || obj.type === ObjectType.TURRET;
                      
                      if (isDamageSource) {
                          const playerBottom = playerPos.y;
@@ -366,6 +436,18 @@ export const LevelManager: React.FC = () => {
                          } else if (obj.type === ObjectType.DRONE) {
                              objBottom = obj.position[1] - 0.5;
                              objTop = obj.position[1] + 0.5;
+                         } else if (obj.type === ObjectType.LASER_GATE) {
+                             objBottom = 0.5;
+                             objTop = 1.2; // Jump over laser
+                         } else if (obj.type === ObjectType.BARRIER) {
+                             objBottom = 0;
+                             objTop = 2.5;
+                         } else if (obj.type === ObjectType.SPIKE_FLOOR) {
+                             objBottom = 0;
+                             objTop = 0.8; // Low to ground, can jump over
+                         } else if (obj.type === ObjectType.TURRET) {
+                             objBottom = 0;
+                             objTop = 0.8; // Can jump over turret
                          }
 
                          const isHit = (playerBottom < objTop) && (playerTop > objBottom);
@@ -438,7 +520,8 @@ export const LevelManager: React.FC = () => {
     }
 
     if (furthestZ > -SPAWN_DISTANCE) {
-         const minGap = 12 + (speed * 0.4); 
+         const config = getDifficultyConfig(level);
+         const minGap = config.minGap + (speed * 0.3); 
          const spawnZ = Math.min(furthestZ - minGap, -SPAWN_DISTANCE);
          
          const isLetterDue = distanceTraveled.current >= nextLetterDistance.current;
@@ -472,31 +555,89 @@ export const LevelManager: React.FC = () => {
                     position: [lane * LANE_WIDTH, 1.2, spawnZ],
                     active: true,
                     color: '#00ffff',
-                    points: 50
+                    points: config.gemBaseValue
                 });
                 hasChanges = true;
              }
 
          } else if (Math.random() > 0.1) {
-            const isObstacle = Math.random() > 0.20;
+            const isObstacle = Math.random() < config.obstacleChance;
 
             if (isObstacle) {
-                // Determine Enemy Spawns (Alien or Drone)
-                // Drones available level 2+, chance 15%
-                // Aliens available level 2+, chance 20%
-                const spawnDrone = level >= 2 && Math.random() < 0.15;
-                const spawnAlien = !spawnDrone && level >= 2 && Math.random() < 0.2; 
-
-                if (spawnDrone) {
+                // Determine obstacle type based on level
+                const obstacleRoll = Math.random();
+                
+                // Level 4+: Laser Gates (10% chance)
+                if (level >= 4 && obstacleRoll < 0.10) {
+                    // Laser gate spans multiple lanes
+                    const gateWidth = Math.min(2 + Math.floor(level / 3), laneCount);
+                    keptObjects.push({
+                        id: uuidv4(),
+                        type: ObjectType.LASER_GATE,
+                        position: [0, 0.8, spawnZ],
+                        active: true,
+                        color: '#ff0000',
+                        laserActive: true,
+                        value: String(gateWidth) // Store gate width
+                    });
+                }
+                // Level 5+: Moving Barriers (8% chance)
+                else if (level >= 5 && obstacleRoll < 0.18) {
+                    const lane = getRandomLane(laneCount);
+                    keptObjects.push({
+                        id: uuidv4(),
+                        type: ObjectType.BARRIER,
+                        position: [lane * LANE_WIDTH, 1.25, spawnZ],
+                        active: true,
+                        color: '#ff6600',
+                        moveDirection: Math.random() > 0.5 ? 1 : -1,
+                        moveSpeed: 3 + level * 0.5
+                    });
+                }
+                // Level 3+: Spike Floors (12% chance)
+                else if (level >= 3 && obstacleRoll < 0.30) {
+                    const availableLanes = [];
+                    const maxLane = Math.floor(laneCount / 2);
+                    for (let i = -maxLane; i <= maxLane; i++) availableLanes.push(i);
+                    availableLanes.sort(() => Math.random() - 0.5);
+                    
+                    const spikeCount = Math.min(1 + Math.floor(Math.random() * 3), availableLanes.length);
+                    for (let i = 0; i < spikeCount; i++) {
+                        const lane = availableLanes[i];
+                        keptObjects.push({
+                            id: uuidv4(),
+                            type: ObjectType.SPIKE_FLOOR,
+                            position: [lane * LANE_WIDTH, 0, spawnZ],
+                            active: true,
+                            color: '#cc0000'
+                        });
+                    }
+                }
+                // Level 6+: Turrets (8% chance)
+                else if (level >= 6 && obstacleRoll < 0.38) {
+                    const lane = getRandomLane(laneCount);
+                    keptObjects.push({
+                        id: uuidv4(),
+                        type: ObjectType.TURRET,
+                        position: [lane * LANE_WIDTH, 0.2, spawnZ],
+                        active: true,
+                        color: '#666666',
+                        hasFired: false
+                    });
+                }
+                // Drones (level 2+)
+                else if (Math.random() < config.droneChance) {
                     const lane = getRandomLane(laneCount);
                     keptObjects.push({
                         id: uuidv4(),
                         type: ObjectType.DRONE,
-                        position: [lane * LANE_WIDTH, 1.5, spawnZ], // Flying height
+                        position: [lane * LANE_WIDTH, 1.5, spawnZ],
                         active: true,
                         color: '#111111'
                     });
-                } else if (spawnAlien) {
+                }
+                // Aliens (level 2+)
+                else if (Math.random() < config.alienChance) {
                     const availableLanes = [];
                     const maxLane = Math.floor(laneCount / 2);
                     for (let i = -maxLane; i <= maxLane; i++) availableLanes.push(i);
@@ -528,8 +669,8 @@ export const LevelManager: React.FC = () => {
                     let countToSpawn = 1;
                     const p = Math.random();
 
-                    if (p > 0.80) countToSpawn = Math.min(3, availableLanes.length);
-                    else if (p > 0.50) countToSpawn = Math.min(2, availableLanes.length);
+                    if (p > config.tripleObstacleChance) countToSpawn = Math.min(3, availableLanes.length);
+                    else if (p > config.multiObstacleChance) countToSpawn = Math.min(2, availableLanes.length);
 
                     for (let i = 0; i < countToSpawn; i++) {
                         const lane = availableLanes[i];
@@ -543,9 +684,9 @@ export const LevelManager: React.FC = () => {
                             color: '#ff0054'
                         });
 
-                        // Chance for Powerup (5%) or Gem (25%) on top of obstacle
+                        // Chance for Powerup or Gem on top of obstacle
                         const topRoll = Math.random();
-                        if (topRoll < 0.05) {
+                        if (topRoll < config.powerupChance) {
                              // Powerup Spawn
                              const isShield = Math.random() > 0.5;
                              keptObjects.push({
@@ -562,7 +703,7 @@ export const LevelManager: React.FC = () => {
                                 position: [laneX, OBSTACLE_HEIGHT + 1.0, spawnZ],
                                 active: true,
                                 color: '#ffd700',
-                                points: 100
+                                points: config.gemBonusValue
                             });
                         }
                     }
@@ -572,8 +713,28 @@ export const LevelManager: React.FC = () => {
                 // Ground Items
                 const lane = getRandomLane(laneCount);
                 
-                // 5% chance for powerup instead of gem
-                if (Math.random() < 0.05) {
+                // Level 4+: Jump Pads (3% chance)
+                if (level >= 4 && Math.random() < 0.03) {
+                    keptObjects.push({
+                       id: uuidv4(),
+                       type: ObjectType.JUMP_PAD,
+                       position: [lane * LANE_WIDTH, 0.1, spawnZ],
+                       active: true,
+                       color: '#00ff88'
+                    });
+                }
+                // Level 7+: Speed Boosts (3% chance)
+                else if (level >= 7 && Math.random() < 0.03) {
+                    keptObjects.push({
+                       id: uuidv4(),
+                       type: ObjectType.SPEED_BOOST,
+                       position: [lane * LANE_WIDTH, 0.5, spawnZ],
+                       active: true,
+                       color: '#ffaa00'
+                    });
+                }
+                // Powerup chance
+                else if (Math.random() < config.powerupChance) {
                     const isShield = Math.random() > 0.5;
                     keptObjects.push({
                        id: uuidv4(),
@@ -583,13 +744,14 @@ export const LevelManager: React.FC = () => {
                        color: isShield ? '#00ffff' : '#d000ff'
                     });
                 } else {
+                    // Standard gem with level-scaled value
                     keptObjects.push({
                         id: uuidv4(),
                         type: ObjectType.GEM,
                         position: [lane * LANE_WIDTH, 1.2, spawnZ],
                         active: true,
                         color: '#00ffff',
-                        points: 50
+                        points: config.gemBaseValue
                     });
                 }
             }
@@ -793,6 +955,100 @@ const GameEntity: React.FC<{ data: GameObject }> = React.memo(({ data }) => {
                          </mesh>
                          <mesh scale={[1.1,1.1,1.1]} geometry={SHIELD_GEO}>
                              <meshBasicMaterial color="#ffffff" wireframe transparent opacity={0.3} />
+                         </mesh>
+                     </group>
+                 )}
+
+                 {/* --- LASER GATE --- */}
+                 {data.type === ObjectType.LASER_GATE && (
+                     <group>
+                         {/* Left Post */}
+                         <mesh position={[-((parseInt(data.value || '3') / 2) * LANE_WIDTH + 0.5), 1.5, 0]} geometry={LASER_POST_GEO}>
+                             <meshStandardMaterial color="#333333" metalness={0.8} roughness={0.2} />
+                         </mesh>
+                         {/* Right Post */}
+                         <mesh position={[((parseInt(data.value || '3') / 2) * LANE_WIDTH + 0.5), 1.5, 0]} geometry={LASER_POST_GEO}>
+                             <meshStandardMaterial color="#333333" metalness={0.8} roughness={0.2} />
+                         </mesh>
+                         {/* Laser Beam */}
+                         <mesh position={[0, 0.8, 0]} scale={[(parseInt(data.value || '3')) * LANE_WIDTH + 1, 1, 1]} geometry={LASER_BEAM_GEO}>
+                             <meshBasicMaterial color="#ff0000" transparent opacity={0.8} />
+                         </mesh>
+                         {/* Glow */}
+                         <mesh position={[0, 0.8, 0]} scale={[(parseInt(data.value || '3')) * LANE_WIDTH + 1.2, 1.5, 1.5]} geometry={LASER_BEAM_GEO}>
+                             <meshBasicMaterial color="#ff0000" transparent opacity={0.3} />
+                         </mesh>
+                         <pointLight color="#ff0000" distance={5} intensity={2} position={[0, 0.8, 0]} />
+                     </group>
+                 )}
+
+                 {/* --- MOVING BARRIER --- */}
+                 {data.type === ObjectType.BARRIER && (
+                     <group>
+                         <mesh geometry={BARRIER_GEO} castShadow>
+                             <meshStandardMaterial color="#ff6600" metalness={0.7} roughness={0.3} />
+                         </mesh>
+                         <mesh scale={[1.1, 1.1, 1.1]} geometry={BARRIER_GEO}>
+                             <meshBasicMaterial color="#ffaa00" wireframe transparent opacity={0.4} />
+                         </mesh>
+                     </group>
+                 )}
+
+                 {/* --- SPIKE FLOOR --- */}
+                 {data.type === ObjectType.SPIKE_FLOOR && (
+                     <group>
+                         {/* Multiple spikes in a row */}
+                         {[-0.6, -0.2, 0.2, 0.6].map((offset, i) => (
+                             <mesh key={i} position={[offset, 0.4, 0]} geometry={SPIKE_GEO}>
+                                 <meshStandardMaterial color="#cc0000" metalness={0.9} roughness={0.1} />
+                             </mesh>
+                         ))}
+                         {/* Base plate */}
+                         <mesh position={[0, 0.05, 0]} rotation={[-Math.PI/2, 0, 0]}>
+                             <planeGeometry args={[1.8, 0.8]} />
+                             <meshStandardMaterial color="#660000" />
+                         </mesh>
+                     </group>
+                 )}
+
+                 {/* --- TURRET --- */}
+                 {data.type === ObjectType.TURRET && (
+                     <group>
+                         <mesh geometry={TURRET_BASE_GEO}>
+                             <meshStandardMaterial color="#444444" metalness={0.8} roughness={0.2} />
+                         </mesh>
+                         <mesh position={[0, 0.3, 0.3]} rotation={[Math.PI/4, 0, 0]} geometry={TURRET_BARREL_GEO}>
+                             <meshStandardMaterial color="#222222" metalness={0.9} roughness={0.1} />
+                         </mesh>
+                         {/* Warning light */}
+                         <mesh position={[0, 0.4, 0]}>
+                             <sphereGeometry args={[0.1]} />
+                             <meshBasicMaterial color="#ff0000" />
+                         </mesh>
+                         <pointLight color="#ff0000" distance={2} intensity={1} position={[0, 0.4, 0]} />
+                     </group>
+                 )}
+
+                 {/* --- JUMP PAD --- */}
+                 {data.type === ObjectType.JUMP_PAD && (
+                     <group>
+                         <mesh geometry={JUMP_PAD_GEO}>
+                             <meshStandardMaterial color="#00ff88" metalness={0.6} roughness={0.2} emissive="#00ff88" emissiveIntensity={0.5} />
+                         </mesh>
+                         <mesh position={[0, 0.1, 0]} scale={[1.2, 1, 1.2]} geometry={JUMP_PAD_GEO}>
+                             <meshBasicMaterial color="#00ffaa" wireframe transparent opacity={0.5} />
+                         </mesh>
+                     </group>
+                 )}
+
+                 {/* --- SPEED BOOST --- */}
+                 {data.type === ObjectType.SPEED_BOOST && (
+                     <group rotation={[0, 0, -Math.PI/2]}>
+                         <mesh geometry={SPEED_BOOST_GEO}>
+                             <meshStandardMaterial color="#ffaa00" metalness={0.7} roughness={0.2} emissive="#ffaa00" emissiveIntensity={1} />
+                         </mesh>
+                         <mesh scale={[1.2, 1.2, 1.2]} geometry={SPEED_BOOST_GEO}>
+                             <meshBasicMaterial color="#ffffff" wireframe transparent opacity={0.4} />
                          </mesh>
                      </group>
                  )}

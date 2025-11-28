@@ -22,7 +22,14 @@ export enum ObjectType {
   MISSILE = 'MISSILE',
   MAGNET = 'MAGNET',
   SHIELD = 'SHIELD',
-  DRONE = 'DRONE'
+  DRONE = 'DRONE',
+  // New obstacle types for variety
+  LASER_GATE = 'LASER_GATE',     // Horizontal laser beam - must jump over
+  BARRIER = 'BARRIER',           // Moving side-to-side barrier
+  SPIKE_FLOOR = 'SPIKE_FLOOR',   // Floor spikes - must jump
+  TURRET = 'TURRET',             // Shoots projectiles at player
+  JUMP_PAD = 'JUMP_PAD',         // Bounces player high
+  SPEED_BOOST = 'SPEED_BOOST'    // Temporary speed boost pickup
 }
 
 export interface GameObject {
@@ -34,7 +41,10 @@ export interface GameObject {
   color?: string;
   targetIndex?: number; // Index in the GEMINI target word
   points?: number; // Score value for gems
-  hasFired?: boolean; // For Aliens
+  hasFired?: boolean; // For Aliens/Turrets
+  moveDirection?: number; // For moving barriers (-1 or 1)
+  moveSpeed?: number; // For moving objects
+  laserActive?: boolean; // For laser gates (toggling)
 }
 
 export interface LeaderboardEntry {

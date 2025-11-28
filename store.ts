@@ -76,12 +76,15 @@ interface GameState {
 }
 
 const GEMINI_TARGET = ['G', 'E', 'M', 'I', 'N', 'I'];
-const MAX_LEVEL = 3;
+const MAX_LEVEL = 10; // Increased from 3 to 10 for longer gameplay
 const POWERUP_DURATION = 10000; // 10 seconds
 
 // Speed Constants
 const START_SPEED = RUN_SPEED_BASE * 0.5; // Start at 50%
-const SPEED_INCREMENT_PER_100 = 0.1; // 10% increase
+const SPEED_INCREMENT_PER_100 = 0.08; // 8% increase per 100 points (slightly reduced for longer game)
+
+// Level completion bonus (increases per level)
+const LEVEL_BONUS_BASE = 500;
 
 // Helper to safely load leaderboard
 const loadLeaderboard = (): LeaderboardEntry[] => {
@@ -250,16 +253,23 @@ export const useStore = create<GameState>((set, get) => ({
   },
 
   advanceLevel: () => {
-      const { level, laneCount } = get();
+      const { level, laneCount, score, totalScore } = get();
       const nextLevel = level + 1;
       
-      // Speed is now purely score-driven, no artificial boost on level up.
+      // Level completion bonus (increases per level)
+      const levelBonus = LEVEL_BONUS_BASE * level;
+      
+      // Add bonus lanes more gradually (max 9 lanes)
+      const newLaneCount = Math.min(3 + Math.floor((nextLevel - 1) / 2) * 2, 9);
       
       set({
           level: nextLevel,
-          laneCount: Math.min(laneCount + 2, 9), 
+          laneCount: newLaneCount, 
           status: GameStatus.PLAYING, 
-          collectedLetters: [] 
+          collectedLetters: [],
+          score: score + levelBonus,
+          totalScore: totalScore + levelBonus,
+          speed: calculateSpeed(totalScore + levelBonus)
       });
   },
 

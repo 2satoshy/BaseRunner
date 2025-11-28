@@ -1,9 +1,16 @@
 // API Service for BaseRunner
 // Use relative /api path for Vercel serverless functions, or full URL for local development
-const isProduction = import.meta.env.PROD;
+// Detect production by checking if we're NOT on localhost
+const isProduction = typeof window !== 'undefined' && 
+  !window.location.hostname.includes('localhost') && 
+  !window.location.hostname.includes('127.0.0.1');
+
 const API_BASE_URL = isProduction 
   ? '/api' 
   : (import.meta.env.VITE_API_URL || 'http://localhost:3001/api');
+
+// Debug logging
+console.log('[API] Environment:', { isProduction, API_BASE_URL, hostname: typeof window !== 'undefined' ? window.location.hostname : 'server' });
 
 interface ApiResponse<T> {
   data?: T;
@@ -35,6 +42,9 @@ class ApiService {
     endpoint: string,
     options: RequestInit = {}
   ): Promise<ApiResponse<T>> {
+    const url = `${API_BASE_URL}${endpoint}`;
+    console.log('[API] Request:', { url, method: options.method || 'GET' });
+    
     try {
       const headers: HeadersInit = {
         'Content-Type': 'application/json',
@@ -45,12 +55,13 @@ class ApiService {
         (headers as Record<string, string>)['Authorization'] = `Bearer ${this.token}`;
       }
 
-      const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+      const response = await fetch(url, {
         ...options,
         headers,
       });
 
       const data = await response.json();
+      console.log('[API] Response:', { url, status: response.status, ok: response.ok });
 
       if (!response.ok) {
         return { error: data.error || 'Request failed' };
@@ -58,7 +69,7 @@ class ApiService {
 
       return { data };
     } catch (error) {
-      console.error('API request error:', error);
+      console.error('[API] Request error:', { url, error });
       return { error: 'Network error' };
     }
   }

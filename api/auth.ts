@@ -2,17 +2,33 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import mongoose from 'mongoose';
 import jwt from 'jsonwebtoken';
 
-// MongoDB connection
-let isConnected = false;
+// MongoDB connection - optimized for serverless
+let cached = (global as any).mongoose;
+
+if (!cached) {
+  cached = (global as any).mongoose = { conn: null, promise: null };
+}
 
 const connectDB = async () => {
-  if (isConnected) return;
-  
+  if (cached.conn) {
+    return cached.conn;
+  }
+
   const uri = process.env.MONGODB_URI;
   if (!uri) throw new Error('MONGODB_URI is not defined');
-  
-  await mongoose.connect(uri);
-  isConnected = true;
+
+  if (!cached.promise) {
+    cached.promise = mongoose.connect(uri, { bufferCommands: false }).then((mongoose) => mongoose);
+  }
+
+  try {
+    cached.conn = await cached.promise;
+  } catch (e) {
+    cached.promise = null;
+    throw e;
+  }
+
+  return cached.conn;
 };
 
 // User Schema
