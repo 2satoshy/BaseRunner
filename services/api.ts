@@ -1,5 +1,9 @@
 // API Service for BaseRunner
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+// Use relative /api path for Vercel serverless functions, or full URL for local development
+const isProduction = import.meta.env.PROD;
+const API_BASE_URL = isProduction 
+  ? '/api' 
+  : (import.meta.env.VITE_API_URL || 'http://localhost:3001/api');
 
 interface ApiResponse<T> {
   data?: T;
@@ -61,11 +65,13 @@ class ApiService {
 
   // Auth endpoints
   async verifyAuth(address: string, message: string, signature: string) {
+    // Use query param for Vercel serverless, path for local
+    const endpoint = isProduction ? '/auth?action=verify' : '/auth/verify';
     const result = await this.request<{
       success: boolean;
       token: string;
       user: UserData;
-    }>('/auth/verify', {
+    }>(endpoint, {
       method: 'POST',
       body: JSON.stringify({ address, message, signature }),
     });
@@ -78,11 +84,12 @@ class ApiService {
   }
 
   async quickAuth(address: string) {
+    const endpoint = isProduction ? '/auth?action=quick-auth' : '/auth/quick-auth';
     const result = await this.request<{
       success: boolean;
       token: string;
       user: UserData;
-    }>('/auth/quick-auth', {
+    }>(endpoint, {
       method: 'POST',
       body: JSON.stringify({ address }),
     });
@@ -95,7 +102,8 @@ class ApiService {
   }
 
   async getMe() {
-    return this.request<{ user: UserData }>('/auth/me');
+    const endpoint = isProduction ? '/auth?action=me' : '/auth/me';
+    return this.request<{ user: UserData }>(endpoint);
   }
 
   async updateUsername(username: string) {
@@ -119,9 +127,10 @@ class ApiService {
   }
 
   async getTopLeaderboard() {
+    const endpoint = isProduction ? '/leaderboard?action=top' : '/leaderboard/top';
     return this.request<{
       entries: { rank: number; name: string; score: number; date: number }[];
-    }>('/leaderboard/top');
+    }>(endpoint);
   }
 
   async submitScore(data: {
@@ -132,6 +141,7 @@ class ApiService {
     username?: string;
     outcome?: 'game_over' | 'victory';
   }) {
+    const endpoint = isProduction ? '/leaderboard' : '/leaderboard/submit';
     return this.request<{
       success: boolean;
       entry: {
@@ -140,7 +150,7 @@ class ApiService {
         score: number;
         isTopScore: boolean;
       };
-    }>('/leaderboard/submit', {
+    }>(endpoint, {
       method: 'POST',
       body: JSON.stringify(data),
     });

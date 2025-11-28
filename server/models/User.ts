@@ -1,4 +1,4 @@
-import mongoose, { Document, Schema, CallbackWithoutResultAndOptionalError } from 'mongoose';
+import mongoose, { Document, Schema } from 'mongoose';
 
 export interface IGameHistory {
   score: number;
@@ -105,9 +105,8 @@ const userSchema = new Schema<IUser>({
 });
 
 // Update lastLogin on every save
-userSchema.pre('save', function(this: IUser, next: CallbackWithoutResultAndOptionalError) {
+userSchema.pre('save', function() {
   this.lastLogin = new Date();
-  next();
 });
 
 export const User = mongoose.model<IUser>('User', userSchema);
