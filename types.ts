@@ -43,6 +43,11 @@ export interface LeaderboardEntry {
     date: number;
 }
 
+export interface BaseAccountUser {
+    address: string;
+    isConnected: boolean;
+}
+
 export const LANE_WIDTH = 2.2;
 export const JUMP_HEIGHT = 2.5;
 export const JUMP_DURATION = 0.6; // seconds

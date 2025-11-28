@@ -6,7 +6,8 @@
 
 
 import { create } from 'zustand';
-import { GameStatus, RUN_SPEED_BASE, LeaderboardEntry } from './types';
+import { GameStatus, RUN_SPEED_BASE, LeaderboardEntry, BaseAccountUser } from './types';
+import { api, UserData } from './services/api';
 
 interface GameState {
   status: GameStatus;
@@ -33,6 +34,12 @@ interface GameState {
   // Leaderboard
   leaderboard: LeaderboardEntry[];
 
+  // Base Account Authentication
+  baseAccount: BaseAccountUser | null;
+  authToken: string | null;
+  userData: UserData | null;
+  isAuthenticated: boolean;
+
   // Actions
   startGame: () => void;
   restartGame: () => void;
@@ -56,7 +63,16 @@ interface GameState {
 
   // Leaderboard Actions
   isHighScore: (score: number) => boolean;
-  saveScore: (name: string) => void;
+  saveScore: (name: string) => Promise<void>;
+  fetchLeaderboard: () => Promise<void>;
+
+  // Base Account Actions
+  setBaseAccount: (user: BaseAccountUser | null) => void;
+  authenticateUser: (address: string, message?: string, signature?: string) => Promise<boolean>;
+  logout: () => Promise<void>;
+  submitGameScore: () => Promise<void>;
+  restoreSession: () => Promise<void>;
+  isSessionLoading: boolean;
 }
 
 const GEMINI_TARGET = ['G', 'E', 'M', 'I', 'N', 'I'];
@@ -105,43 +121,63 @@ export const useStore = create<GameState>((set, get) => ({
 
   leaderboard: loadLeaderboard(),
 
-  startGame: () => set({ 
-    status: GameStatus.PLAYING, 
-    score: 0, 
-    totalScore: 0,
-    lives: 3, 
-    maxLives: 3,
-    speed: START_SPEED,
-    collectedLetters: [],
-    level: 1,
-    laneCount: 3,
-    gemsCollected: 0,
-    distance: 0,
-    hasDoubleJump: false,
-    hasImmortality: false,
-    isImmortalityActive: false,
-    magnetEndTime: 0,
-    shieldEndTime: 0
-  }),
+  baseAccount: null,
+  authToken: api.getToken(),
+  userData: null,
+  isAuthenticated: false,
+  isSessionLoading: true,
 
-  restartGame: () => set({ 
-    status: GameStatus.PLAYING, 
-    score: 0, 
-    totalScore: 0,
-    lives: 3, 
-    maxLives: 3,
-    speed: START_SPEED,
-    collectedLetters: [],
-    level: 1,
-    laneCount: 3,
-    gemsCollected: 0,
-    distance: 0,
-    hasDoubleJump: false,
-    hasImmortality: false,
-    isImmortalityActive: false,
-    magnetEndTime: 0,
-    shieldEndTime: 0
-  }),
+  startGame: () => {
+    const { isAuthenticated } = get();
+    if (!isAuthenticated) {
+      console.warn('Cannot start game without authentication');
+      return;
+    }
+    set({ 
+      status: GameStatus.PLAYING, 
+      score: 0, 
+      totalScore: 0,
+      lives: 3, 
+      maxLives: 3,
+      speed: START_SPEED,
+      collectedLetters: [],
+      level: 1,
+      laneCount: 3,
+      gemsCollected: 0,
+      distance: 0,
+      hasDoubleJump: false,
+      hasImmortality: false,
+      isImmortalityActive: false,
+      magnetEndTime: 0,
+      shieldEndTime: 0
+    });
+  },
+
+  restartGame: () => {
+    const { isAuthenticated } = get();
+    if (!isAuthenticated) {
+      console.warn('Cannot restart game without authentication');
+      return;
+    }
+    set({ 
+      status: GameStatus.PLAYING, 
+      score: 0, 
+      totalScore: 0,
+      lives: 3, 
+      maxLives: 3,
+      speed: START_SPEED,
+      collectedLetters: [],
+      level: 1,
+      laneCount: 3,
+      gemsCollected: 0,
+      distance: 0,
+      hasDoubleJump: false,
+      hasImmortality: false,
+      isImmortalityActive: false,
+      magnetEndTime: 0,
+      shieldEndTime: 0
+    });
+  },
 
   takeDamage: () => {
     const { lives, isImmortalityActive, shieldEndTime } = get();
@@ -281,13 +317,169 @@ export const useStore = create<GameState>((set, get) => ({
       return score > leaderboard[leaderboard.length - 1].score;
   },
 
-  saveScore: (name) => set((state) => {
+  saveScore: async (name) => {
+      const state = get();
       const newEntry: LeaderboardEntry = { name, score: state.score, date: Date.now() };
+      
+      // Update local leaderboard immediately
       const newBoard = [...state.leaderboard, newEntry]
          .sort((a, b) => b.score - a.score)
          .slice(0, 5);
       
       localStorage.setItem('gemini_runner_leaderboard', JSON.stringify(newBoard));
-      return { leaderboard: newBoard };
-  }),
+      set({ leaderboard: newBoard });
+
+      // Submit to server if authenticated
+      if (state.isAuthenticated) {
+        try {
+          await api.submitScore({
+            score: state.score,
+            level: state.level,
+            gemsCollected: state.gemsCollected,
+            distance: Math.floor(state.distance),
+            username: name,
+          });
+        } catch (error) {
+          console.error('Failed to submit score to server:', error);
+        }
+      }
+  },
+
+  fetchLeaderboard: async () => {
+    try {
+      const result = await api.getTopLeaderboard();
+      if (result.data?.entries) {
+        const entries: LeaderboardEntry[] = result.data.entries.map(e => ({
+          name: e.name,
+          score: e.score,
+          date: e.date,
+        }));
+        set({ leaderboard: entries });
+        localStorage.setItem('gemini_runner_leaderboard', JSON.stringify(entries));
+      }
+    } catch (error) {
+      console.error('Failed to fetch leaderboard:', error);
+    }
+  },
+
+  setBaseAccount: (user) => set({ baseAccount: user }),
+
+  authenticateUser: async (address, message, signature) => {
+    try {
+      let result;
+      
+      if (message && signature) {
+        // Full SIWE authentication
+        result = await api.verifyAuth(address, message, signature);
+      } else {
+        // Quick auth for development
+        result = await api.quickAuth(address);
+      }
+
+      if (result.data?.success && result.data.user) {
+        // Save wallet address to localStorage for session restore
+        localStorage.setItem('baserunner_wallet', address.toLowerCase());
+        
+        set({
+          isAuthenticated: true,
+          isSessionLoading: false,
+          authToken: result.data.token,
+          userData: result.data.user,
+          baseAccount: { address, isConnected: true },
+        });
+        
+        // Fetch leaderboard after auth
+        get().fetchLeaderboard();
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('Authentication error:', error);
+      return false;
+    }
+  },
+
+  logout: async () => {
+    await api.logout();
+    localStorage.removeItem('baserunner_wallet');
+    set({
+      isAuthenticated: false,
+      authToken: null,
+      userData: null,
+      baseAccount: null,
+      status: GameStatus.MENU,
+    });
+  },
+
+  restoreSession: async () => {
+    const token = api.getToken();
+    const savedWallet = localStorage.getItem('baserunner_wallet');
+    
+    if (!token) {
+      set({ isSessionLoading: false, isAuthenticated: false });
+      return;
+    }
+
+    try {
+      // Try to get current user data from the server
+      const result = await api.getMe();
+      
+      if (result.data?.user) {
+        set({
+          isAuthenticated: true,
+          isSessionLoading: false,
+          userData: result.data.user,
+          baseAccount: savedWallet ? { address: savedWallet, isConnected: true } : null,
+        });
+        
+        // Fetch leaderboard
+        get().fetchLeaderboard();
+      } else {
+        // Token invalid, clear session
+        api.logout();
+        localStorage.removeItem('baserunner_wallet');
+        set({
+          isAuthenticated: false,
+          isSessionLoading: false,
+          authToken: null,
+          userData: null,
+          baseAccount: null,
+        });
+      }
+    } catch (error) {
+      console.error('Session restore error:', error);
+      // Clear invalid session
+      api.logout();
+      localStorage.removeItem('baserunner_wallet');
+      set({
+        isAuthenticated: false,
+        isSessionLoading: false,
+        authToken: null,
+        userData: null,
+        baseAccount: null,
+      });
+    }
+  },
+
+  submitGameScore: async () => {
+    const state = get();
+    if (!state.isAuthenticated || state.score <= 0) return;
+
+    try {
+      await api.submitScore({
+        score: state.score,
+        level: state.level,
+        gemsCollected: state.gemsCollected,
+        distance: Math.floor(state.distance),
+        username: state.userData?.username || `Runner_${state.baseAccount?.address.slice(2, 8)}`,
+        outcome: state.status === GameStatus.VICTORY ? 'victory' : 'game_over',
+      });
+      
+      // Refresh leaderboard
+      await get().fetchLeaderboard();
+    } catch (error) {
+      console.error('Failed to submit game score:', error);
+    }
+  },
 }));

@@ -6,10 +6,17 @@
 
 
 import React, { useState, useEffect } from 'react';
-import { Heart, Zap, Trophy, MapPin, Diamond, Rocket, ArrowUpCircle, Shield, Activity, PlusCircle, Play, ListOrdered, X, Magnet } from 'lucide-react';
+import { Heart, Zap, Trophy, MapPin, Diamond, Rocket, ArrowUpCircle, Shield, Activity, PlusCircle, Play, ListOrdered, X, Magnet, Wallet, LogOut } from 'lucide-react';
 import { useStore } from '../../store';
 import { GameStatus, GEMINI_COLORS, ShopItem, RUN_SPEED_BASE, LeaderboardEntry } from '../../types';
 import { audio } from '../System/Audio';
+import { createBaseAccountSDK } from '@base-org/account';
+
+// Initialize Base Account SDK
+const baseSDK = createBaseAccountSDK({
+  appName: 'BaseRunner',
+  appLogoUrl: 'https://www.gstatic.com/aistudio/starter-apps/gemini_runner/gemini_runner.png',
+});
 
 // Available Shop Items
 const SHOP_ITEMS: ShopItem[] = [
@@ -202,9 +209,76 @@ const ShopScreen: React.FC = () => {
 };
 
 export const HUD: React.FC = () => {
-  const { score, lives, maxLives, collectedLetters, status, level, restartGame, startGame, gemsCollected, distance, isImmortalityActive, speed, leaderboard, isHighScore, saveScore } = useStore();
+  const { 
+    score, lives, maxLives, collectedLetters, status, level, restartGame, startGame, 
+    gemsCollected, distance, isImmortalityActive, speed, leaderboard, isHighScore, saveScore, 
+    baseAccount, authenticateUser, logout, isAuthenticated, userData, fetchLeaderboard, submitGameScore,
+    restoreSession, isSessionLoading
+  } = useStore();
   const [showMenuLeaderboard, setShowMenuLeaderboard] = useState(false);
   const [hasSubmittedScore, setHasSubmittedScore] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  // Restore session on mount
+  useEffect(() => {
+    restoreSession();
+  }, []);
+
+  // Fetch leaderboard on mount
+  useEffect(() => {
+    fetchLeaderboard();
+  }, []);
+
+  // Generate a fresh nonce for authentication
+  const generateNonce = () => {
+    return crypto.randomUUID().replace(/-/g, '');
+  };
+
+  // Handle Base Account sign-in
+  const handleSignIn = async () => {
+    try {
+      setIsConnecting(true);
+      const provider = baseSDK.getProvider();
+      const nonce = generateNonce();
+
+      const { accounts } = await provider.request({
+        method: 'wallet_connect',
+        params: [
+          {
+            version: '1',
+            capabilities: {
+              signInWithEthereum: {
+                nonce,
+                chainId: '0x2105', // Base Mainnet - 8453
+              },
+            },
+          },
+        ],
+      });
+
+      const { address } = accounts[0];
+      const { message, signature } = accounts[0].capabilities?.signInWithEthereum || {};
+      
+      // Authenticate with backend
+      if (message && signature) {
+        await authenticateUser(address, message, signature);
+      } else {
+        // Fallback to quick auth
+        await authenticateUser(address);
+      }
+      
+      console.log('Signed in with Base:', address);
+    } catch (error) {
+      console.error('Sign-in error:', error);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  // Handle sign out
+  const handleSignOut = () => {
+    logout();
+  };
   
   // Reset submission state when status changes to PLAYING
   useEffect(() => {
@@ -212,6 +286,13 @@ export const HUD: React.FC = () => {
           setHasSubmittedScore(false);
       }
   }, [status]);
+
+  // Auto-submit score when game ends (for authenticated users)
+  useEffect(() => {
+    if ((status === GameStatus.GAME_OVER || status === GameStatus.VICTORY) && isAuthenticated && !hasSubmittedScore) {
+      submitGameScore();
+    }
+  }, [status, isAuthenticated]);
 
   const target = ['G', 'E', 'M', 'I', 'N', 'I'];
   const containerClass = "absolute inset-0 pointer-events-none flex flex-col justify-between p-4 md:p-8 z-50";
@@ -224,6 +305,16 @@ export const HUD: React.FC = () => {
       return (
           <div className="absolute inset-0 flex items-center justify-center z-[100] bg-black/80 backdrop-blur-sm p-4 pointer-events-auto">
               
+              {/* Session Loading Overlay */}
+              {isSessionLoading && (
+                <div className="absolute inset-0 bg-black/95 z-[200] flex items-center justify-center">
+                  <div className="flex flex-col items-center">
+                    <div className="w-12 h-12 border-4 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin mb-4"></div>
+                    <p className="text-cyan-400 font-mono text-sm">LOADING SESSION...</p>
+                  </div>
+                </div>
+              )}
+
               {/* Leaderboard Overlay */}
               {showMenuLeaderboard && (
                   <div className="absolute inset-0 bg-black/95 z-50 flex items-center justify-center p-4">
@@ -255,15 +346,56 @@ export const HUD: React.FC = () => {
                      
                      {/* Content positioned at the bottom of the card */}
                      <div className="absolute inset-0 flex flex-col justify-end items-center p-6 pb-8 text-center z-10">
-                        <button 
-                          onClick={() => { audio.init(); startGame(); }}
-                          className="w-full group relative px-6 py-4 bg-white/10 backdrop-blur-md border border-white/20 text-white font-black text-xl rounded-xl hover:bg-white/20 transition-all shadow-[0_0_20px_rgba(0,255,255,0.2)] hover:shadow-[0_0_30px_rgba(0,255,255,0.4)] hover:border-cyan-400 overflow-hidden mb-3"
-                        >
-                            <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/40 via-purple-500/40 to-pink-500/40 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700"></div>
-                            <span className="relative z-10 tracking-widest flex items-center justify-center">
-                                INITIALIZE RUN <Play className="ml-2 w-5 h-5 fill-white" />
-                            </span>
-                        </button>
+                        
+                        {/* Base Account Sign In/Status */}
+                        {isAuthenticated && baseAccount ? (
+                          <>
+                            <div className="w-full flex items-center justify-between bg-blue-600/20 backdrop-blur-md border border-blue-500/30 rounded-xl px-4 py-3 mb-3">
+                              <div className="flex items-center">
+                                <Wallet className="w-4 h-4 text-blue-400 mr-2" />
+                                <div className="flex flex-col items-start">
+                                  <span className="text-blue-300 text-sm font-mono">
+                                    {baseAccount.address.slice(0, 6)}...{baseAccount.address.slice(-4)}
+                                  </span>
+                                  {userData?.username && (
+                                    <span className="text-blue-400/70 text-xs">{userData.username}</span>
+                                  )}
+                                </div>
+                              </div>
+                              <button 
+                                onClick={handleSignOut}
+                                className="text-gray-400 hover:text-red-400 transition-colors"
+                                title="Sign out"
+                              >
+                                <LogOut className="w-4 h-4" />
+                              </button>
+                            </div>
+
+                            <button 
+                              onClick={() => { audio.init(); startGame(); }}
+                              className="w-full group relative px-6 py-4 bg-white/10 backdrop-blur-md border border-white/20 text-white font-black text-xl rounded-xl hover:bg-white/20 transition-all shadow-[0_0_20px_rgba(0,255,255,0.2)] hover:shadow-[0_0_30px_rgba(0,255,255,0.4)] hover:border-cyan-400 overflow-hidden mb-3"
+                            >
+                                <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/40 via-purple-500/40 to-pink-500/40 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700"></div>
+                                <span className="relative z-10 tracking-widest flex items-center justify-center">
+                                    INITIALIZE RUN <Play className="ml-2 w-5 h-5 fill-white" />
+                                </span>
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <div className="w-full bg-black/40 backdrop-blur-md border border-white/10 rounded-xl px-4 py-4 mb-4">
+                              <p className="text-gray-400 text-sm mb-3">Sign in with your Base Account to play</p>
+                              <button
+                                onClick={handleSignIn}
+                                disabled={isConnecting}
+                                className="w-full flex items-center justify-center px-6 py-3 bg-blue-600 hover:bg-blue-500 border border-blue-400/30 text-white font-bold text-sm rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                <Wallet className="w-4 h-4 mr-2" />
+                                {isConnecting ? 'CONNECTING...' : 'SIGN IN WITH BASE'}
+                              </button>
+                            </div>
+                          </>
+                        )}
                         
                         <button 
                           onClick={() => setShowMenuLeaderboard(true)}
