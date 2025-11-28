@@ -48,6 +48,7 @@
     "@types/express": "^5.0.5",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.14.0",
+    "@vercel/node": "^5.5.13",
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.22",
     "concurrently": "^9.2.1",
