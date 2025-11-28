@@ -75,8 +75,14 @@ interface GameState {
   isSessionLoading: boolean;
 }
 
-const GEMINI_TARGET = ['G', 'E', 'M', 'I', 'N', 'I'];
-const MAX_LEVEL = 10; // Increased from 3 to 10 for longer gameplay
+// The full phrase to collect across all levels
+// "GEMINI IS THE QUICK BROWN FOX THAT JUMPS OVER THE LAZY AI DOG"
+const FULL_PHRASE = "GEMINI IS THE QUICK BROWN FOX THAT JUMPS OVER THE LAZY AI DOG";
+const PHRASE_LETTERS = FULL_PHRASE.split('').filter(c => c !== ' '); // Remove spaces
+
+// Each level requires collecting a portion of the phrase
+const LETTERS_PER_LEVEL = 6; // Collect 6 letters per level
+const MAX_LEVEL = 30; // 30 levels for extended gameplay
 const POWERUP_DURATION = 10000; // 10 seconds
 
 // Speed Constants
@@ -85,6 +91,27 @@ const SPEED_INCREMENT_PER_100 = 0.08; // 8% increase per 100 points (slightly re
 
 // Level completion bonus (increases per level)
 const LEVEL_BONUS_BASE = 500;
+
+// Helper function to get which letters need to be collected for a given level
+// Returns indices into PHRASE_LETTERS that are NOT yet collected
+// Includes: 1) Letters assigned to this level 2) Carryover from previous levels
+const getLevelLetterIndices = (level: number, collectedLetters: number[]): number[] => {
+  // Calculate the range of letters for this level
+  const levelStartIndex = (level - 1) * LETTERS_PER_LEVEL;
+  const levelEndIndex = Math.min(levelStartIndex + LETTERS_PER_LEVEL, PHRASE_LETTERS.length);
+  
+  // Get letters from all levels up to and including current level that aren't collected
+  const availableIndices: number[] = [];
+  for (let i = 0; i < levelEndIndex; i++) {
+    if (!collectedLetters.includes(i)) {
+      availableIndices.push(i);
+    }
+  }
+  return availableIndices;
+};
+
+// Export for use in LevelManager
+export { PHRASE_LETTERS, LETTERS_PER_LEVEL, MAX_LEVEL, getLevelLetterIndices };
 
 // Helper to safely load leaderboard
 const loadLeaderboard = (): LeaderboardEntry[] => {
@@ -220,6 +247,7 @@ export const useStore = create<GameState>((set, get) => ({
   collectLetter: (index) => {
     const { collectedLetters, level } = get();
     
+    // Index is the absolute position in PHRASE_LETTERS
     if (!collectedLetters.includes(index)) {
       const newLetters = [...collectedLetters, index];
       const points = 100; // Award points for letters to contribute to speed
@@ -235,25 +263,27 @@ export const useStore = create<GameState>((set, get) => ({
           };
       });
 
-      // Check if full word collected
-      if (newLetters.length === GEMINI_TARGET.length) {
-        if (level < MAX_LEVEL) {
-            get().advanceLevel();
-        } else {
-            set((state) => ({
-                status: GameStatus.VICTORY,
-                score: state.score + 5000,
-                totalScore: state.totalScore + 5000,
-                // Victory speed calc optional, but consistent
-                speed: calculateSpeed(state.totalScore + 5000)
-            }));
+      // Check if all phrase letters collected
+      if (newLetters.length === PHRASE_LETTERS.length) {
+        set((state) => ({
+            status: GameStatus.VICTORY,
+            score: state.score + 10000,
+            totalScore: state.totalScore + 10000,
+            speed: calculateSpeed(state.totalScore + 10000)
+        }));
+      } else {
+        // Check if current level's letters are all collected
+        const levelLetters = getLevelLetterIndices(level, newLetters);
+        if (levelLetters.length === 0 && level < MAX_LEVEL) {
+          // All letters for this level collected (including carryovers), advance
+          get().advanceLevel();
         }
       }
     }
   },
 
   advanceLevel: () => {
-      const { level, laneCount, score, totalScore } = get();
+      const { level, laneCount, score, totalScore, collectedLetters } = get();
       const nextLevel = level + 1;
       
       // Level completion bonus (increases per level)
@@ -262,11 +292,12 @@ export const useStore = create<GameState>((set, get) => ({
       // Add bonus lanes more gradually (max 9 lanes)
       const newLaneCount = Math.min(3 + Math.floor((nextLevel - 1) / 2) * 2, 9);
       
+      // Keep collectedLetters - uncollected ones carry over automatically
       set({
           level: nextLevel,
           laneCount: newLaneCount, 
           status: GameStatus.PLAYING, 
-          collectedLetters: [],
+          // Don't reset collectedLetters - they persist!
           score: score + levelBonus,
           totalScore: totalScore + levelBonus,
           speed: calculateSpeed(totalScore + levelBonus)

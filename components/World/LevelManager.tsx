@@ -10,8 +10,8 @@ import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Text3D, Center, Float } from '@react-three/drei';
 import { v4 as uuidv4 } from 'uuid';
-import { useStore } from '../../store';
-import { GameObject, ObjectType, LANE_WIDTH, SPAWN_DISTANCE, REMOVE_DISTANCE, GameStatus, GEMINI_COLORS } from '../../types';
+import { useStore, PHRASE_LETTERS, getLevelLetterIndices, MAX_LEVEL, LETTERS_PER_LEVEL } from '../../store';
+import { GameObject, ObjectType, LANE_WIDTH, SPAWN_DISTANCE, REMOVE_DISTANCE, GameStatus } from '../../types';
 import { audio } from '../System/Audio';
 
 // Geometry Constants
@@ -210,7 +210,8 @@ export const LevelManager: React.FC = () => {
     level,
     magnetEndTime,
     activateMagnet,
-    activateShield
+    activateShield,
+    advanceLevel
   } = useStore();
   
   const objectsRef = useRef<GameObject[]>([]);
@@ -220,7 +221,11 @@ export const LevelManager: React.FC = () => {
 
   const playerObjRef = useRef<THREE.Object3D | null>(null);
   const distanceTraveled = useRef(0);
+  const levelStartDistance = useRef(0);
   const nextLetterDistance = useRef(BASE_LETTER_INTERVAL);
+  
+  // Distance required to complete a level (increases slightly each level)
+  const DISTANCE_PER_LEVEL = 2500;
 
   // Handle resets and transitions
   useEffect(() => {
@@ -236,6 +241,7 @@ export const LevelManager: React.FC = () => {
         
         // Reset trackers
         distanceTraveled.current = 0;
+        levelStartDistance.current = 0;
         nextLetterDistance.current = getLetterInterval(1);
 
     } else if (isLevelUp && level > 1) {
@@ -250,6 +256,7 @@ export const LevelManager: React.FC = () => {
             active: true,
         });
         
+        levelStartDistance.current = distanceTraveled.current;
         nextLetterDistance.current = distanceTraveled.current - SPAWN_DISTANCE + getLetterInterval(level);
         setRenderTrigger(t => t + 1);
         
@@ -277,6 +284,14 @@ export const LevelManager: React.FC = () => {
     const dist = speed * safeDelta;
     
     distanceTraveled.current += dist;
+    
+    // Check for distance-based level advancement
+    const levelDistance = distanceTraveled.current - levelStartDistance.current;
+    if (levelDistance >= DISTANCE_PER_LEVEL && level < MAX_LEVEL) {
+      // Force advance to next level after traveling enough distance
+      advanceLevel();
+      return; // Skip rest of frame to let level transition happen
+    }
 
     let hasChanges = false;
     let playerPos = new THREE.Vector3(0, 0, 0);
@@ -528,13 +543,17 @@ export const LevelManager: React.FC = () => {
 
          if (isLetterDue) {
              const lane = getRandomLane(laneCount);
-             const target = ['G','E','M','I','N','I'];
-             const availableIndices = target.map((_, i) => i).filter(i => !collectedLetters.includes(i));
+             // Get letters available for this level (includes carryover from previous levels)
+             const availableIndices = getLevelLetterIndices(level, collectedLetters);
 
              if (availableIndices.length > 0) {
                  const chosenIndex = availableIndices[Math.floor(Math.random() * availableIndices.length)];
-                 const val = target[chosenIndex];
-                 const color = GEMINI_COLORS[chosenIndex];
+                 const val = PHRASE_LETTERS[chosenIndex];
+                 // Cycle through colors for visual variety
+                 const colorIndex = chosenIndex % 12;
+                 const colors = ['#00ffff', '#ff00ff', '#ffff00', '#00ff00', '#ff6600', '#ff0066', 
+                                 '#6600ff', '#00ff88', '#ff8800', '#0088ff', '#ff0088', '#88ff00'];
+                 const color = colors[colorIndex];
 
                  keptObjects.push({
                     id: uuidv4(),
@@ -549,6 +568,8 @@ export const LevelManager: React.FC = () => {
                  nextLetterDistance.current += getLetterInterval(level);
                  hasChanges = true;
              } else {
+                // No letters to collect for this level - advance to next level
+                // This triggers when all letters are collected early
                 keptObjects.push({
                     id: uuidv4(),
                     type: ObjectType.GEM,

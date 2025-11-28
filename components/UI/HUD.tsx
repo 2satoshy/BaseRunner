@@ -7,8 +7,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { Heart, Zap, Trophy, MapPin, Diamond, Rocket, ArrowUpCircle, Shield, Activity, PlusCircle, Play, ListOrdered, X, Magnet, Wallet, LogOut } from 'lucide-react';
-import { useStore } from '../../store';
-import { GameStatus, GEMINI_COLORS, ShopItem, RUN_SPEED_BASE, LeaderboardEntry } from '../../types';
+import { useStore, PHRASE_LETTERS, LETTERS_PER_LEVEL, MAX_LEVEL, getLevelLetterIndices } from '../../store';
+import { GameStatus, ShopItem, RUN_SPEED_BASE, LeaderboardEntry } from '../../types';
 import { audio } from '../System/Audio';
 import { createBaseAccountSDK } from '@base-org/account';
 
@@ -294,8 +294,17 @@ export const HUD: React.FC = () => {
     }
   }, [status, isAuthenticated]);
 
-  const target = ['G', 'E', 'M', 'I', 'N', 'I'];
   const containerClass = "absolute inset-0 pointer-events-none flex flex-col justify-between p-4 md:p-8 z-50";
+
+  // Get letters for current level display (includes carryovers)
+  const levelStartIndex = (level - 1) * LETTERS_PER_LEVEL;
+  const levelEndIndex = Math.min(levelStartIndex + LETTERS_PER_LEVEL, PHRASE_LETTERS.length);
+  const currentLevelLetters = PHRASE_LETTERS.slice(levelStartIndex, levelEndIndex);
+  const carryoverLetters = getLevelLetterIndices(level, collectedLetters).filter(i => i < levelStartIndex);
+  
+  // Colors for variety
+  const letterColors = ['#00ffff', '#ff00ff', '#ffff00', '#00ff00', '#ff6600', '#ff0066', 
+                        '#6600ff', '#00ff88', '#ff8800', '#0088ff', '#ff0088', '#88ff00'];
 
   if (status === GameStatus.SHOP) {
       return <ShopScreen />;
@@ -428,11 +437,11 @@ export const HUD: React.FC = () => {
                     <div className="grid grid-cols-1 gap-3 md:gap-4 text-center mb-8 w-full max-w-md">
                         <div className="bg-gray-900/80 p-3 md:p-4 rounded-lg border border-gray-700 flex items-center justify-between">
                             <div className="flex items-center text-yellow-400 text-sm md:text-base"><Trophy className="mr-2 w-4 h-4 md:w-5 md:h-5"/> LEVEL</div>
-                            <div className="text-xl md:text-2xl font-bold font-mono">{level} / 3</div>
+                            <div className="text-xl md:text-2xl font-bold font-mono">{level} / {MAX_LEVEL}</div>
                         </div>
                         <div className="bg-gray-900/80 p-3 md:p-4 rounded-lg border border-gray-700 flex items-center justify-between">
-                            <div className="flex items-center text-cyan-400 text-sm md:text-base"><Diamond className="mr-2 w-4 h-4 md:w-5 md:h-5"/> GEMS COLLECTED</div>
-                            <div className="text-xl md:text-2xl font-bold font-mono">{gemsCollected}</div>
+                            <div className="flex items-center text-cyan-400 text-sm md:text-base"><Diamond className="mr-2 w-4 h-4 md:w-5 md:h-5"/> LETTERS COLLECTED</div>
+                            <div className="text-xl md:text-2xl font-bold font-mono">{collectedLetters.length} / {PHRASE_LETTERS.length}</div>
                         </div>
                         <div className="bg-gray-900/80 p-3 md:p-4 rounded-lg border border-gray-700 flex items-center justify-between">
                             <div className="flex items-center text-purple-400 text-sm md:text-base"><MapPin className="mr-2 w-4 h-4 md:w-5 md:h-5"/> DISTANCE</div>
@@ -566,7 +575,7 @@ export const HUD: React.FC = () => {
         
         {/* Level Indicator - Moved to Top Center aligned with Score/Hearts */}
         <div className="absolute top-5 left-1/2 transform -translate-x-1/2 text-sm md:text-lg text-purple-300 font-bold tracking-wider font-mono bg-black/50 px-3 py-1 rounded-full border border-purple-500/30 backdrop-blur-sm z-50">
-            LEVEL {level} <span className="text-gray-500 text-xs md:text-sm">/ 3</span>
+            LEVEL {level} <span className="text-gray-500 text-xs md:text-sm">/ {MAX_LEVEL}</span>
         </div>
 
         {/* Active Skill Indicator (Immortality) */}
@@ -576,28 +585,62 @@ export const HUD: React.FC = () => {
              </div>
         )}
 
-        {/* Gemini Collection Status - Just below Top Bar */}
-        <div className="absolute top-16 md:top-24 left-1/2 transform -translate-x-1/2 flex space-x-2 md:space-x-3">
-            {target.map((char, idx) => {
-                const isCollected = collectedLetters.includes(idx);
-                const color = GEMINI_COLORS[idx];
+        {/* Letter Collection Status - Shows current level's letters plus carryovers */}
+        <div className="absolute top-16 md:top-24 left-1/2 transform -translate-x-1/2 flex flex-col items-center">
+            {/* Current Level Letters */}
+            <div className="flex space-x-1 md:space-x-2 mb-1">
+                {currentLevelLetters.map((char, idx) => {
+                    const absoluteIndex = levelStartIndex + idx;
+                    const isCollected = collectedLetters.includes(absoluteIndex);
+                    const color = letterColors[absoluteIndex % letterColors.length];
 
-                return (
-                    <div 
-                        key={idx}
-                        style={{
-                            borderColor: isCollected ? color : 'rgba(55, 65, 81, 1)',
-                            // Use dark text (almost black) when collected to contrast with neon background
-                            color: isCollected ? 'rgba(0, 0, 0, 0.8)' : 'rgba(55, 65, 81, 1)',
-                            boxShadow: isCollected ? `0 0 20px ${color}` : 'none',
-                            backgroundColor: isCollected ? color : 'rgba(0, 0, 0, 0.9)'
-                        }}
-                        className={`w-8 h-10 md:w-10 md:h-12 flex items-center justify-center border-2 font-black text-lg md:text-xl font-cyber rounded-lg transform transition-all duration-300`}
-                    >
-                        {char}
-                    </div>
-                );
-            })}
+                    return (
+                        <div 
+                            key={absoluteIndex}
+                            style={{
+                                borderColor: isCollected ? color : 'rgba(55, 65, 81, 1)',
+                                color: isCollected ? 'rgba(0, 0, 0, 0.8)' : 'rgba(55, 65, 81, 1)',
+                                boxShadow: isCollected ? `0 0 20px ${color}` : 'none',
+                                backgroundColor: isCollected ? color : 'rgba(0, 0, 0, 0.9)'
+                            }}
+                            className={`w-7 h-9 md:w-9 md:h-11 flex items-center justify-center border-2 font-black text-base md:text-lg font-cyber rounded-lg transform transition-all duration-300`}
+                        >
+                            {char}
+                        </div>
+                    );
+                })}
+            </div>
+            
+            {/* Carryover letters from previous levels (if any) */}
+            {carryoverLetters.length > 0 && (
+                <div className="flex space-x-1 items-center">
+                    <span className="text-xs text-orange-400 mr-1">MISSED:</span>
+                    {carryoverLetters.slice(0, 6).map((idx) => {
+                        const char = PHRASE_LETTERS[idx];
+                        const color = letterColors[idx % letterColors.length];
+                        return (
+                            <div 
+                                key={idx}
+                                style={{
+                                    borderColor: color,
+                                    color: 'rgba(55, 65, 81, 1)',
+                                }}
+                                className="w-5 h-6 md:w-6 md:h-7 flex items-center justify-center border font-bold text-xs md:text-sm font-cyber rounded bg-black/90 animate-pulse"
+                            >
+                                {char}
+                            </div>
+                        );
+                    })}
+                    {carryoverLetters.length > 6 && (
+                        <span className="text-xs text-orange-400">+{carryoverLetters.length - 6}</span>
+                    )}
+                </div>
+            )}
+            
+            {/* Overall progress */}
+            <div className="text-xs text-cyan-400/70 mt-1 font-mono">
+                {collectedLetters.length}/{PHRASE_LETTERS.length} LETTERS
+            </div>
         </div>
 
         {/* Bottom Overlay */}
